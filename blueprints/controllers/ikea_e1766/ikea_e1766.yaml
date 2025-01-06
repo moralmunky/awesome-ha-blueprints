@@ -15,7 +15,7 @@ blueprint:
 
     🚀 This blueprint is part of the **[Awesome HA Blueprints](https://epmatt.github.io/awesome-ha-blueprints) project**.
 
-    ℹ️ Version 2025.01.03
+    ℹ️ Version 2025.01.05
   source_url: https://github.com/EPMatt/awesome-ha-blueprints/blob/main/blueprints/controllers/ikea_e1766/ikea_e1766.yaml
   domain: automation
   homeassistant:
@@ -31,27 +31,31 @@ blueprint:
             - ZHA
             - Zigbee2MQTT
     controller_device:
-      name: (deCONZ, ZHA) Controller Device
-      description: The controller device to use for the automation. Choose a value only if the remote is integrated with deCONZ, ZHA.
+      name: Controller Device
+      description: The controller device to use for the automation. Choose a value only if the remote is integrated with deCONZ, ZHA, Zigbee2MQTT v2.0.0 or greater.
       default: ''
       selector:
         device:
-    controller_entity:
-      name: (Zigbee2MQTT) Controller Entity
-      description: The action sensor of the controller to use for the automation. Choose a value only if the remote is integrated with Zigbee2MQTT.
-      default: ''
-      selector:
-        device:
-          manufacturer: IKEA
-          model: TRADFRI open/close remote
-          multiple: false
+          filter:
+            #May need to verify
+            - integration: deconz
+              manufacturer: IKEA
+              model: TRADFRI open/close remote
+            #May need to verify
+            - integration: zha
+              manufacturer: IKEA of Sweden
+              model: TRADFRI open/close remote
+            - integration: mqtt
+              manufacturer: IKEA
+              model: TRADFRI open/close remote
     helper_last_controller_event:
       name: (Required) Helper - Last Controller Event
       description: Input Text used to store the last event fired by the controller. You will need to manually create a text input entity for this, please read the blueprint Additional Notes for more info.
       default: ''
       selector:
         entity:
-          domain: input_text
+         filter:
+          - domain: input_text
     # inputs for custom actions
     action_button_up_short:
       name: (Optional) Up button short press
@@ -168,47 +172,46 @@ variables:
   # integrations which need to store the previous press event to determine which button was released
   integrations_with_prev_event_storage: [zha, zigbee2mqtt]
   # build data to send within a controller event
-  controller_entity: !input controller_entity
   controller_device: !input controller_device
-  controller_id: '{% if integration_id=="zigbee2mqtt" %}{{controller_entity}}{% else %}{{controller_device}}{% endif %}'
+  controller_id: !input controller_device
 mode: restart
 max_exceeded: silent
-trigger:
+triggers:
   # trigger for zigbee2mqtt
-  - platform: device
+  - trigger: device
     domain: mqtt
-    device_id: !input controller_entity
+    device_id: !input controller_device
     type: action
     subtype: "open"
-  - platform: device
+  - trigger: device
     domain: mqtt
-    device_id: !input controller_entity
+    device_id: !input controller_device
     type: action
     subtype: "stop"
-  - platform: device
+  - trigger: device
     domain: mqtt
-    device_id: !input controller_entity
+    device_id: !input controller_device
     type: action
     subtype: "close"
-  - platform: device
+  - trigger: device
     domain: mqtt
-    device_id: !input controller_entity
+    device_id: !input controller_device
     type: action
     subtype: "stop"
   # trigger for other integrations
-  - platform: event
+  - trigger: event
     event_type:
       - deconz_event
       - zha_event
     event_data:
       device_id: !input controller_device
-condition:
+conditions:
   - condition: and
     conditions:
       -  >-
           {%- set trigger_action -%}
           {%- if integration_id == "zigbee2mqtt" -%}
-          {{ trigger.payload}}
+          {{ trigger.payload }}
           {%- elif integration_id == "deconz" -%}
           {{ trigger.event.data.event }}
           {%- elif integration_id == "zha" -%}
@@ -218,10 +221,10 @@ condition:
           {{ trigger_action not in ["","None"] }}
       # only for zigbee2mqtt, check if the event is relative to a real state change, and not only some minor changes in the sensor attributes
       # this is required since multiple state_changed events are fired for a single button press, with the result of the automation being triggered multiple times
-      # Currently interfered with preseeing the same direction on button a second time to stop the movement
+      # Interfered with pressing the same direction on button a second time to stop the movement
       # - >- 
       #   {{ integration_id != "zigbee2mqtt" or trigger.payload != (states(helper_last_controller_event) | from_json).a if helper_last_controller_event is not none and (states(helper_last_controller_event) | regex_match("^\{((\"a\":\".*\"|\"t\":\d+\.\d+)(,)?){2}\}$")) }}
-action:
+actions:
   # debouncing - when automation is triggered multiple times, the last automation run is the one which completes execution, due to mode restart
   # therefore previous runs must wait for the debounce delay before executing any other action
   # if the delay expires and the automation is still running it means it's the last run and execution can continue
@@ -241,7 +244,7 @@ action:
       trigger_delta: '{{ (as_timestamp(now()) - ((states(helper_last_controller_event) | from_json).t if helper_last_controller_event is not none and (states(helper_last_controller_event) | regex_match("^\{((\"a\":\".*\"|\"t\":\d+\.\d+)(,)?){2}\}$")) else as_timestamp("1970-01-01 00:00:00"))) * 1000 }}'
       last_controller_event: '{{ (states(helper_last_controller_event) | from_json).a if helper_last_controller_event is not none and (states(helper_last_controller_event) | regex_match("^\{((\"a\":\".*\"|\"t\":\d+\.\d+)(,)?){2}\}$")) else "" }}'
   # update helper
-  - service: input_text.set_value
+  - action: input_text.set_value
     data:
       entity_id: !input helper_last_controller_event
       value: '{{ {"a":trigger_action,"t":as_timestamp(now())} | to_json }}'
@@ -258,7 +261,7 @@ action:
                       - conditions: '{{ trigger_action | string in states(helper_last_controller_event) and trigger_delta | int <= helper_double_press_delay | int }}'
                         sequence:
                           # store the double press event in the last controller event helper
-                          - service: input_text.set_value
+                          - action: input_text.set_value
                             data:
                               entity_id: !input helper_last_controller_event
                               value: '{{ {"a":"double_press","t":as_timestamp(now())} | to_json }}'
@@ -325,7 +328,7 @@ action:
                       - conditions: '{{ trigger_action | string in states(helper_last_controller_event) and trigger_delta | int <= helper_double_press_delay | int }}'
                         sequence:
                           # store the double press event in the last controller event helper
-                          - service: input_text.set_value
+                          - action: input_text.set_value
                             data:
                               entity_id: !input helper_last_controller_event
                               value: '{{ {"a":"double_press","t":as_timestamp(now())} | to_json }}'
